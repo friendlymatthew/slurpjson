@@ -205,7 +205,7 @@ impl<'doc, 'src, 'tape> Iterator for ObjectEntryIter<'doc, 'src, 'tape> {
 
         let key = {
             let key = self.value_ref(key_index).raw();
-            debug_assert!(key.len() > 2, "keys should not be empty");
+            debug_assert!(key.len() >= 2, "keys must be wrapped with quotations");
 
             str::from_utf8(&key[1..key.len() - 1]).unwrap()
         };
@@ -336,6 +336,23 @@ mod tests {
         let document = Document::new(source, &t);
 
         assert_eq!(document.root().raw(), br#"{"foo":"bar"}"#);
+    }
+
+    #[test]
+    fn test_object_empty_key() {
+        let source = br#"{"":"bar"}"#;
+
+        let p = Parser::try_new().unwrap();
+        let t = p.parse_bytes(source).unwrap();
+
+        let document = Document::new(source, &t);
+
+        assert_eq!(document.root().raw(), br#"{"":"bar"}"#);
+
+        let root = document.root();
+        let mut keys = root.object_keys().unwrap();
+        assert_eq!(keys.next(), Some(""));
+        assert_eq!(keys.next(), None);
     }
 
     #[test]
