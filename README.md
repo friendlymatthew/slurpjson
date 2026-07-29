@@ -1,8 +1,8 @@
 # slurpjson 
 
-This project parses JSON entirely on the GPU via wgpu compute shaders. The parser decomposes JSON parsing into a pipeline of parallel prefix scans, producing a flat tape of structural characters
+This project parses JSON entirely on the GPU via wgpu compute shaders. The parser decomposes JSON parsing into a pipeline of parallel prefix scans, producing a flat tape of structural characters. This is purely for research into reducing JSON parsing into what Raph Levien calls invitingly parallel problems
 
-This is purely for research into reducing JSON parsing into what Raph Levien calls invitingly parallel problems
+There is a blog post in the works that will describe the algorithm in detail, but for now a good code pointer is https://github.com/friendlymatthew/slurpjson/blob/c95ea7e08c9f5ce58ab1777b5334c65b917878a4/src/parser.rs#L90
 
 # Usage
 
