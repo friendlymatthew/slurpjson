@@ -1,6 +1,6 @@
 use crate::{
     Tape, TapeEntry,
-    gpu::{ComputeProgram, Gpu},
+    gpu::{ComputeProgram, Gpu, StorageAccess},
 };
 use anyhow::{Result, ensure};
 
@@ -251,31 +251,63 @@ impl Programs {
         let scan_fsm = gpu.compile_program(
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
-            &[true, false, true],
+            &[
+                StorageAccess::READ,
+                StorageAccess::READ | StorageAccess::WRITE,
+                StorageAccess::READ,
+            ],
         );
 
         let scan_structural = gpu.compile_program(
             include_str!("shaders/scan_structural.wgsl"),
             "main",
-            &[true, true, false, false, true],
+            &[
+                StorageAccess::READ,
+                StorageAccess::READ,
+                StorageAccess::READ | StorageAccess::WRITE,
+                StorageAccess::READ | StorageAccess::WRITE,
+                StorageAccess::READ,
+            ],
         );
 
         let scan_depth = gpu.compile_program(
             include_str!("shaders/scan_depth.wgsl"),
             "main",
-            &[true, true, false, true],
+            &[
+                StorageAccess::READ,
+                StorageAccess::READ,
+                StorageAccess::READ | StorageAccess::WRITE,
+                StorageAccess::READ,
+            ],
         );
 
         let parent_link = gpu.compile_program(
             include_str!("shaders/parent_link.wgsl"),
             "main",
-            &[true, true, true, false, false, false, false],
+            &[
+                StorageAccess::READ,
+                StorageAccess::READ,
+                StorageAccess::READ,
+                StorageAccess::READ | StorageAccess::WRITE,
+                StorageAccess::READ | StorageAccess::WRITE,
+                StorageAccess::READ | StorageAccess::WRITE,
+                StorageAccess::READ | StorageAccess::WRITE,
+            ],
         );
 
         let assemble_tape = gpu.compile_program(
             include_str!("shaders/assemble_tape.wgsl"),
             "main",
-            &[true, true, true, true, false, true, true, true],
+            &[
+                StorageAccess::READ,
+                StorageAccess::READ,
+                StorageAccess::READ,
+                StorageAccess::READ,
+                StorageAccess::READ | StorageAccess::WRITE,
+                StorageAccess::READ,
+                StorageAccess::READ,
+                StorageAccess::READ,
+            ],
         );
 
         Self {

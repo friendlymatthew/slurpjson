@@ -142,7 +142,7 @@ impl Gpu {
         &self,
         shader_src: &str,
         entry_point: &str,
-        read_only_bindings: &[bool],
+        storage_accesses: &[StorageAccess],
     ) -> ComputeProgram {
         let module = self
             .device
@@ -151,14 +151,16 @@ impl Gpu {
                 source: wgpu::ShaderSource::Wgsl(shader_src.into()),
             });
 
-        let bind_group_layout_entries = read_only_bindings
+        let bind_group_layout_entries = storage_accesses
             .iter()
             .enumerate()
-            .map(|(i, &read_only)| wgpu::BindGroupLayoutEntry {
+            .map(|(i, &access)| wgpu::BindGroupLayoutEntry {
                 binding: i.try_into().unwrap(),
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only },
+                    ty: wgpu::BufferBindingType::Storage {
+                        read_only: access.is_read_only(),
+                    },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -195,7 +197,7 @@ impl Gpu {
         ComputeProgram {
             pipeline,
             bind_group_layout,
-            binding_count: read_only_bindings.len(),
+            binding_count: storage_accesses.len(),
         }
     }
 
@@ -239,14 +241,15 @@ impl Gpu {
         encoder: &mut wgpu::CommandEncoder,
         shader_src: &str,
         entry_point: &str,
-        buffers: &[(&wgpu::Buffer, bool)],
+        buffers: &[(&wgpu::Buffer, StorageAccess)],
         workgroups: u32,
     ) {
-        let read_only_bindings = buffers
+        let storage_accesses = buffers
             .iter()
-            .map(|(_, read_only)| *read_only)
+            .map(|(_, access)| *access)
             .collect::<Vec<_>>();
-        let program = self.compile_program(shader_src, entry_point, &read_only_bindings);
+
+        let program = self.compile_program(shader_src, entry_point, &storage_accesses);
         let buffers = buffers
             .iter()
             .map(|(buffer, _)| *buffer)
@@ -260,12 +263,32 @@ impl Gpu {
         &self,
         shader_src: &str,
         entry_point: &str,
-        buffers: &[(&wgpu::Buffer, bool)],
+        buffers: &[(&wgpu::Buffer, StorageAccess)],
         workgroups: u32,
     ) {
         let mut encoder = self.create_encoder();
         self.encode(&mut encoder, shader_src, entry_point, buffers, workgroups);
         self.submit(encoder);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageAccess(u8);
+
+impl StorageAccess {
+    pub const READ: Self = Self(1 << 0);
+    pub const WRITE: Self = Self(1 << 1);
+
+    pub const fn is_read_only(self) -> bool {
+        self.0 == Self::READ.0
+    }
+}
+
+impl std::ops::BitOr for StorageAccess {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
     }
 }
 
@@ -297,9 +320,9 @@ mod tests {
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
             &[
-                (&input_buf, true),
-                (&output_buf, false),
-                (&input_len_buf, true),
+                (&input_buf, StorageAccess::READ),
+                (&output_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (&input_len_buf, StorageAccess::READ),
             ],
             1,
         );
@@ -340,9 +363,9 @@ mod tests {
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
             &[
-                (&input_buf, true),
-                (&output_buf, false),
-                (&input_len_buf, true),
+                (&input_buf, StorageAccess::READ),
+                (&output_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (&input_len_buf, StorageAccess::READ),
             ],
             1,
         );
@@ -386,9 +409,9 @@ mod tests {
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
             &[
-                (&input_buf, true),
-                (&fsm_buf, false),
-                (&input_len_buf, true),
+                (&input_buf, StorageAccess::READ),
+                (&fsm_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (&input_len_buf, StorageAccess::READ),
             ],
             1,
         );
@@ -401,11 +424,14 @@ mod tests {
             include_str!("shaders/scan_structural.wgsl"),
             "main",
             &[
-                (&input_buf, true),
-                (&fsm_buf, true),
-                (&compact_buf, false),
-                (&num_structual_buf, false),
-                (&input_len_buf, true),
+                (&input_buf, StorageAccess::READ),
+                (&fsm_buf, StorageAccess::READ),
+                (&compact_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (
+                    &num_structual_buf,
+                    StorageAccess::READ | StorageAccess::WRITE,
+                ),
+                (&input_len_buf, StorageAccess::READ),
             ],
             1,
         );
@@ -417,10 +443,10 @@ mod tests {
             include_str!("shaders/scan_depth.wgsl"),
             "main",
             &[
-                (&input_buf, true),
-                (&compact_buf, true),
-                (&depth_buf, false),
-                (&num_structual_buf, true),
+                (&input_buf, StorageAccess::READ),
+                (&compact_buf, StorageAccess::READ),
+                (&depth_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (&num_structual_buf, StorageAccess::READ),
             ],
             1,
         );
@@ -459,9 +485,9 @@ mod tests {
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
             &[
-                (&input_buf, true),
-                (&fsm_buf, false),
-                (&input_len_buf, true),
+                (&input_buf, StorageAccess::READ),
+                (&fsm_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (&input_len_buf, StorageAccess::READ),
             ],
             1,
         );
@@ -474,11 +500,14 @@ mod tests {
             include_str!("shaders/scan_structural.wgsl"),
             "main",
             &[
-                (&input_buf, true),
-                (&fsm_buf, true),
-                (&compact_buf, false),
-                (&num_structual_buf, false),
-                (&input_len_buf, true),
+                (&input_buf, StorageAccess::READ),
+                (&fsm_buf, StorageAccess::READ),
+                (&compact_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (
+                    &num_structual_buf,
+                    StorageAccess::READ | StorageAccess::WRITE,
+                ),
+                (&input_len_buf, StorageAccess::READ),
             ],
             1,
         );
@@ -490,10 +519,10 @@ mod tests {
             include_str!("shaders/scan_depth.wgsl"),
             "main",
             &[
-                (&input_buf, true),
-                (&compact_buf, true),
-                (&depth_buf, false),
-                (&num_structual_buf, true),
+                (&input_buf, StorageAccess::READ),
+                (&compact_buf, StorageAccess::READ),
+                (&depth_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (&num_structual_buf, StorageAccess::READ),
             ],
             1,
         );
@@ -512,13 +541,13 @@ mod tests {
             include_str!("shaders/parent_link.wgsl"),
             "main",
             &[
-                (&input_buf, true),
-                (&compact_buf, true),
-                (&num_structual_buf, true),
-                (&parent_buf, false),
-                (&summary_a_buf, false),
-                (&summary_b_buf, false),
-                (&error_buf, false),
+                (&input_buf, StorageAccess::READ),
+                (&compact_buf, StorageAccess::READ),
+                (&num_structual_buf, StorageAccess::READ),
+                (&parent_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (&summary_a_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (&summary_b_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (&error_buf, StorageAccess::READ | StorageAccess::WRITE),
             ],
             1,
         );
