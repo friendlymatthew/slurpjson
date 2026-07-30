@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use wgpu::util::DeviceExt;
 
 pub struct Gpu {
@@ -28,21 +28,20 @@ impl Gpu {
     }
 
     async fn init() -> Result<Self> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 ..Default::default()
             })
-            .await
-            .ok_or_else(|| anyhow!("no suitable GPU adapter found"))?;
+            .await?;
 
         let info = adapter.get_info();
         eprintln!("gpu: {} ({:?})", info.name, info.backend);
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .request_device(&wgpu::DeviceDescriptor::default())
             .await?;
 
         Ok(Self { device, queue })
@@ -111,7 +110,9 @@ impl Gpu {
             })
             .collect::<Vec<_>>();
 
-        self.device.poll(wgpu::Maintain::Wait);
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device polling must succeed");
 
         for rx in &receivers {
             rx.recv().unwrap().unwrap();
@@ -119,7 +120,12 @@ impl Gpu {
 
         stagings
             .iter()
-            .map(|s| s.slice(..).get_mapped_range().to_vec())
+            .map(|s| {
+                s.slice(..)
+                    .get_mapped_range()
+                    .expect("staging buffer must be mapped")
+                    .to_vec()
+            })
             .collect::<Vec<_>>()
     }
 
@@ -179,8 +185,8 @@ impl Gpu {
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&bind_group_layout)],
+                immediate_size: 0,
             });
 
         let pipeline = self
