@@ -283,16 +283,24 @@ mod tests {
         let input_str = r#"hello "world" end"#;
 
         let mut input = input_str.bytes().collect::<Vec<u8>>();
-        input.resize(256, 0);
+        input.resize(input_str.len().next_multiple_of(4), 0);
 
         let input_buf = gpu.storage_buffer("fsm_in", &input);
+        let input_len_buf = gpu.storage_buffer(
+            "input_len",
+            bytemuck::cast_slice(&[u32::try_from(input_str.len()).unwrap()]),
+        );
         let output_buf =
             gpu.storage_buffer_empty("fsm_out", (256 * std::mem::size_of::<[u32; 4]>()) as u64);
 
         gpu.dispatch(
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
-            &[(&input_buf, true), (&output_buf, false)],
+            &[
+                (&input_buf, true),
+                (&output_buf, false),
+                (&input_len_buf, true),
+            ],
             1,
         );
 
@@ -318,16 +326,24 @@ mod tests {
         let input_str = r#"hello "wo\"rld" end"#;
 
         let mut input = input_str.bytes().collect::<Vec<u8>>();
-        input.resize(256, 0);
+        input.resize(input_str.len().next_multiple_of(4), 0);
 
         let input_buf = gpu.storage_buffer("fsm_in", &input);
+        let input_len_buf = gpu.storage_buffer(
+            "input_len",
+            bytemuck::cast_slice(&[u32::try_from(input_str.len()).unwrap()]),
+        );
         let output_buf =
             gpu.storage_buffer_empty("fsm_out", (256 * std::mem::size_of::<[u32; 4]>()) as u64);
 
         gpu.dispatch(
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
-            &[(&input_buf, true), (&output_buf, false)],
+            &[
+                (&input_buf, true),
+                (&output_buf, false),
+                (&input_len_buf, true),
+            ],
             1,
         );
 
@@ -356,22 +372,30 @@ mod tests {
         let input_str = r#"{"a":{"b":[1,2]}}"#;
 
         let mut input = input_str.bytes().collect::<Vec<u8>>();
-        input.resize(256, 0);
+        input.resize(input_str.len().next_multiple_of(4), 0);
 
         let input_buf = gpu.storage_buffer("bytes", &input);
+        let input_len_buf = gpu.storage_buffer(
+            "input_len",
+            bytemuck::cast_slice(&[u32::try_from(input_str.len()).unwrap()]),
+        );
         let fsm_buf =
             gpu.storage_buffer_empty("fsm", (256 * std::mem::size_of::<[u32; 4]>()) as u64);
 
         gpu.dispatch(
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
-            &[(&input_buf, true), (&fsm_buf, false)],
+            &[
+                (&input_buf, true),
+                (&fsm_buf, false),
+                (&input_len_buf, true),
+            ],
             1,
         );
 
         let compact_buf =
             gpu.storage_buffer_empty("compact", (256 * std::mem::size_of::<u32>()) as u64);
-        let count_buf = gpu.storage_buffer_empty("count", 4);
+        let num_structual_buf = gpu.storage_buffer_empty("num_structual", 4);
 
         gpu.dispatch(
             include_str!("shaders/scan_structural.wgsl"),
@@ -380,7 +404,8 @@ mod tests {
                 (&input_buf, true),
                 (&fsm_buf, true),
                 (&compact_buf, false),
-                (&count_buf, false),
+                (&num_structual_buf, false),
+                (&input_len_buf, true),
             ],
             1,
         );
@@ -395,15 +420,19 @@ mod tests {
                 (&input_buf, true),
                 (&compact_buf, true),
                 (&depth_buf, false),
+                (&num_structual_buf, true),
             ],
             1,
         );
 
         let depths = gpu.read_buffer_as::<i32>(&depth_buf);
-        let count =
-            usize::try_from(gpu.read_buffer_as::<u32>(&count_buf)[0]).expect("count fits usize");
+        let num_structual = usize::try_from(gpu.read_buffer_as::<u32>(&num_structual_buf)[0])
+            .expect("num_structual fits usize");
 
-        assert_eq!(&depths[..count], &[1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 2, 1, 0]);
+        assert_eq!(
+            &depths[..num_structual],
+            &[1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 2, 1, 0]
+        );
     }
 
     #[test]
@@ -416,22 +445,30 @@ mod tests {
         let input_str = r#"{"a":{"b":[1,2]}}"#;
 
         let mut input = input_str.bytes().collect::<Vec<u8>>();
-        input.resize(256, 0);
+        input.resize(input_str.len().next_multiple_of(4), 0);
 
         let input_buf = gpu.storage_buffer("bytes", &input);
+        let input_len_buf = gpu.storage_buffer(
+            "input_len",
+            bytemuck::cast_slice(&[u32::try_from(input_str.len()).unwrap()]),
+        );
         let fsm_buf =
             gpu.storage_buffer_empty("fsm", (256 * std::mem::size_of::<[u32; 4]>()) as u64);
 
         gpu.dispatch(
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
-            &[(&input_buf, true), (&fsm_buf, false)],
+            &[
+                (&input_buf, true),
+                (&fsm_buf, false),
+                (&input_len_buf, true),
+            ],
             1,
         );
 
         let compact_buf =
             gpu.storage_buffer_empty("compact", (256 * std::mem::size_of::<u32>()) as u64);
-        let count_buf = gpu.storage_buffer_empty("count", 4);
+        let num_structual_buf = gpu.storage_buffer_empty("num_structual", 4);
 
         gpu.dispatch(
             include_str!("shaders/scan_structural.wgsl"),
@@ -440,7 +477,8 @@ mod tests {
                 (&input_buf, true),
                 (&fsm_buf, true),
                 (&compact_buf, false),
-                (&count_buf, false),
+                (&num_structual_buf, false),
+                (&input_len_buf, true),
             ],
             1,
         );
@@ -455,6 +493,7 @@ mod tests {
                 (&input_buf, true),
                 (&compact_buf, true),
                 (&depth_buf, false),
+                (&num_structual_buf, true),
             ],
             1,
         );
@@ -475,7 +514,7 @@ mod tests {
             &[
                 (&input_buf, true),
                 (&compact_buf, true),
-                (&count_buf, true),
+                (&num_structual_buf, true),
                 (&parent_buf, false),
                 (&summary_a_buf, false),
                 (&summary_b_buf, false),
@@ -488,16 +527,22 @@ mod tests {
         let depths = gpu.read_buffer_as::<i32>(&depth_buf);
         let positions = gpu.read_buffer_as::<u32>(&compact_buf);
         let errors = gpu.read_buffer_as::<u32>(&error_buf);
-        let count =
-            usize::try_from(gpu.read_buffer_as::<u32>(&count_buf)[0]).expect("count fits usize");
+        let num_structual = usize::try_from(gpu.read_buffer_as::<u32>(&num_structual_buf)[0])
+            .expect("num_structual fits usize");
 
         assert_eq!(errors[0], 0);
         assert_eq!(parents[0], -1);
         assert_eq!(
-            &positions[..count],
+            &positions[..num_structual],
             &[0, 1, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15, 16]
         );
-        assert_eq!(&depths[..count], &[1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 2, 1, 0]);
-        assert_eq!(&parents[..count], &[-1, 0, 0, 0, 3, 3, 3, 6, 6, 6, 6, 3, 0]);
+        assert_eq!(
+            &depths[..num_structual],
+            &[1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 2, 1, 0]
+        );
+        assert_eq!(
+            &parents[..num_structual],
+            &[-1, 0, 0, 0, 3, 3, 3, 6, 6, 6, 6, 3, 0]
+        );
     }
 }

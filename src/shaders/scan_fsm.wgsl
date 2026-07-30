@@ -10,6 +10,10 @@ fn read_byte(idx: u32) -> u32 {
 @binding(1)
 var<storage, read_write> output: array<vec3<u32>>;
 
+@group(0)
+@binding(2)
+var<storage, read> input_len: array<u32>;
+
 var<workgroup> scratch: array<vec3<u32>, 256>;
 
 /*
@@ -52,15 +56,19 @@ const TRANSITION_IDENTITY = vec3<u32>(NORMAL, STRING, ESCAPE);
 @compute
 @workgroup_size(256)
 fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
-    switch read_byte(local_id.x) {
-        case QUOTE {
-            scratch[local_id.x] = TRANSITION_QUOTE;
-        }
-        case BACKSLASH {
-            scratch[local_id.x] = TRANSITION_ESCAPE;
-        }
-        default {
-            scratch[local_id.x] = TRANSITION_DEFAULT;
+    if local_id.x >= input_len[0] {
+        scratch[local_id.x] = TRANSITION_IDENTITY;
+    } else {
+        switch read_byte(local_id.x) {
+            case QUOTE {
+                scratch[local_id.x] = TRANSITION_QUOTE;
+            }
+            case BACKSLASH {
+                scratch[local_id.x] = TRANSITION_ESCAPE;
+            }
+            default {
+                scratch[local_id.x] = TRANSITION_DEFAULT;
+            }
         }
     }
 

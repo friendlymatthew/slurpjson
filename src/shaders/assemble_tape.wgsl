@@ -18,6 +18,14 @@ var<storage, read> compacted: array<u32>;
 @binding(5)
 var<storage, read> fsm: array<vec3<u32>>;
 
+@group(0)
+@binding(6)
+var<storage, read> input_len: array<u32>;
+
+@group(0)
+@binding(7)
+var<storage, read> num_structual: array<u32>;
+
 fn read_byte(idx: u32) -> u32 {
     return (global[idx / 4u] >> ((idx % 4u) * 8u)) & 0xFFu;
 }
@@ -78,25 +86,25 @@ fn token_kind(b: u32) -> u32 {
 }
 
 fn string_end(pos: u32) -> u32 {
-    for (var i = pos + 1u; i < 256u; i++) {
+    for (var i = pos + 1u; i < input_len[0]; i++) {
         let b = read_byte(i);
         if b == QUOTE && fsm[i - 1u][0] == 1u && fsm[i][0] == 0u {
             return i + 1u;
         }
     }
 
-    return 256u;
+    return input_len[0];
 }
 
 fn scalar_end(pos: u32) -> u32 {
-    for (var i = pos + 1u; i < 256u; i++) {
+    for (var i = pos + 1u; i < input_len[0]; i++) {
         let b = read_byte(i);
         if b == 0u || is_whitespace(b) || is_structural(b) {
             return i;
         }
     }
 
-    return 256u;
+    return input_len[0];
 }
 
 fn token_end(pos: u32, kind: u32) -> u32 {
@@ -121,6 +129,10 @@ var<storage, read_write> tape: array<TapeEntry>;
 @compute
 @workgroup_size(256)
 fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
+    if local_id.x >= num_structual[0] {
+        return;
+    }
+
     let pos = compacted[local_id.x];
     let b = read_byte(pos);
     let kind = token_kind(b);

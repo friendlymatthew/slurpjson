@@ -16,7 +16,7 @@ var<storage, read> compacted: array<u32>;
 
 @group(0)
 @binding(2)
-var<storage, read> count: array<u32>;
+var<storage, read> num_structual: array<u32>;
 
 @group(0)
 @binding(3)
@@ -64,7 +64,7 @@ fn init_summary(index: u32) {
     summaries_a[index].pops = 0u;
     summaries_a[index].len = 0u;
 
-    if index >= count[0] {
+    if index >= num_structual[0] {
         return;
     }
 
@@ -279,7 +279,7 @@ fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
         storageBarrier();
     }
 
-    if index < count[0] {
+    if index < num_structual[0] {
         parents[index] = parent_before(index);
     }
 

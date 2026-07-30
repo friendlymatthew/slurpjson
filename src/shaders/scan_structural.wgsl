@@ -12,7 +12,11 @@ var<storage, read_write> output: array<u32>;
 
 @group(0)
 @binding(3)
-var<storage, read_write> count: array<u32>;
+var<storage, read_write> num_structual: array<u32>;
+
+@group(0)
+@binding(4)
+var<storage, read> input_len: array<u32>;
 
 fn read_byte(idx: u32) -> u32 {
     return (global[idx / 4u] >> ((idx % 4u) * 8u)) & 0xFFu;
@@ -46,12 +50,19 @@ var<workgroup> scratch: array<u32, 256>;
 @compute
 @workgroup_size(256)
 fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
-    let b = read_byte(local_id.x);
-    let state = fsm[local_id.x][0];
+    let index = local_id.x;
+    let is_active = index < input_len[0];
+
+    var b = 0u;
+    var state = NORMAL;
+    if is_active {
+        b = read_byte(index);
+        state = fsm[index][0];
+    }
 
     var prev_state = 0u;
-    if local_id.x > 0u {
-        prev_state = fsm[local_id.x - 1u][0];
+    if index > 0u && is_active {
+        prev_state = fsm[index - 1u][0];
     }
 
     let is_normal = state == NORMAL;
@@ -60,16 +71,20 @@ fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
     var starts_scalar = false;
     if is_normal && is_scalar_byte(b) {
         var prev_b = 0u;
-        if local_id.x > 0u {
-            prev_b = read_byte(local_id.x - 1u);
+        if index > 0u {
+            prev_b = read_byte(index - 1u);
         }
 
-        starts_scalar = local_id.x == 0u || is_whitespace(prev_b) || is_structural(prev_b);
+        starts_scalar = index == 0u || is_whitespace(prev_b) || is_structural(prev_b);
     }
 
-    let mask = select(0u, 1u, (is_normal && is_structural(b)) || starts_string || starts_scalar);
+    let mask = select(
+        0u,
+        1u,
+        is_active && ((is_normal && is_structural(b)) || starts_string || starts_scalar),
+    );
 
-    scratch[local_id.x] = mask;
+    scratch[index] = mask;
 
     workgroupBarrier();
 
@@ -78,20 +93,20 @@ fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
         workgroupBarrier();
 
         var left = 0u;
-        if local_id.x >= stride {
-            left = scratch[local_id.x - stride];
+        if index >= stride {
+            left = scratch[index - stride];
         }
 
         workgroupBarrier();
 
-        scratch[local_id.x] += left;
+        scratch[index] += left;
     }
 
     if mask == 1u {
-        output[scratch[local_id.x] - 1u] = local_id.x;
+        output[scratch[index] - 1u] = index;
     }
 
-    if local_id.x == 255u {
-        count[0] = scratch[255u];
+    if index == 255u {
+        num_structual[0] = scratch[255u];
     }
 }

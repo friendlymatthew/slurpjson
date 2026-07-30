@@ -47,11 +47,15 @@ impl Parser {
             "input is too large, max len: {MAX_INPUT_BYTES} (for now)"
         );
 
-        // todo: can we avoid this allocation
+        let input_len = u32::try_from(json.len()).expect("input length must fit in u32");
+
         let mut input = json.to_vec();
-        input.resize(MAX_INPUT_BYTES, 0);
+        input.resize(json.len().next_multiple_of(4).max(4), 0);
 
         let input_buf = self.gpu.storage_buffer("bytes", &input);
+        let input_len_buf = self
+            .gpu
+            .storage_buffer("input_len", bytemuck::cast_slice(&[input_len]));
 
         let fsm_buf = self
             .gpu
@@ -61,7 +65,9 @@ impl Parser {
             .gpu
             .storage_buffer_empty("compact", buffer_size(std::mem::size_of::<u32>()));
 
-        let count_buf = self.gpu.storage_buffer_empty("count", count_buffer_size());
+        let num_structual_buf = self
+            .gpu
+            .storage_buffer_empty("num_structual", count_buffer_size());
 
         let depth_buf = self
             .gpu
@@ -102,7 +108,7 @@ impl Parser {
         self.gpu.encode_program(
             &mut encoder,
             &self.programs.scan_fsm,
-            &[&input_buf, &fsm_buf],
+            &[&input_buf, &fsm_buf, &input_len_buf],
             1,
         );
 
@@ -113,7 +119,7 @@ impl Parser {
         //
         // output:
         //     compact: [0, 1, 6, 8, 20]
-        //     count:   5
+        //     num_structual: 5
         //
         // interpretation:
         //     tokens:  [{, "foo", :, "bar\"baz\"", }]
@@ -122,7 +128,13 @@ impl Parser {
         self.gpu.encode_program(
             &mut encoder,
             &self.programs.scan_structural,
-            &[&input_buf, &fsm_buf, &compact_buf, &count_buf],
+            &[
+                &input_buf,
+                &fsm_buf,
+                &compact_buf,
+                &num_structual_buf,
+                &input_len_buf,
+            ],
             1,
         );
 
@@ -139,14 +151,14 @@ impl Parser {
         self.gpu.encode_program(
             &mut encoder,
             &self.programs.scan_depth,
-            &[&input_buf, &compact_buf, &depth_buf],
+            &[&input_buf, &compact_buf, &depth_buf, &num_structual_buf],
             1,
         );
 
         // input:
         //     json:    {"foo": "bar\"baz\""}
         //     compact: [0, 1, 6, 8, 20]
-        //     count:   5
+        //     num_structual: 5
         //     tokens:  [{, "foo", :, "bar\"baz\"", }]
         //
         // output:
@@ -163,7 +175,7 @@ impl Parser {
             &[
                 &input_buf,
                 &compact_buf,
-                &count_buf,
+                &num_structual_buf,
                 &parent_buf,
                 &parent_summary_a_buf,
                 &parent_summary_b_buf,
@@ -201,11 +213,15 @@ impl Parser {
                 &parent_buf,
                 &tape_buf,
                 &fsm_buf,
+                &input_len_buf,
+                &num_structual_buf,
             ],
             1,
         );
 
-        let count_staging = self.gpu.encode_copy_to_staging(&mut encoder, &count_buf);
+        let num_structual_staging = self
+            .gpu
+            .encode_copy_to_staging(&mut encoder, &num_structual_buf);
         let tape_staging = self.gpu.encode_copy_to_staging(&mut encoder, &tape_buf);
         let parent_error_staging = self
             .gpu
@@ -213,12 +229,12 @@ impl Parser {
 
         self.gpu.submit(encoder);
 
-        let reads = self
-            .gpu
-            .read_stagings(&[&count_staging, &tape_staging, &parent_error_staging]);
+        let reads =
+            self.gpu
+                .read_stagings(&[&num_structual_staging, &tape_staging, &parent_error_staging]);
 
-        let structure_count = usize::try_from(bytemuck::cast_slice::<u8, u32>(&reads[0])[0])
-            .expect("structure count must fit in usize");
+        let num_structual = usize::try_from(bytemuck::cast_slice::<u8, u32>(&reads[0])[0])
+            .expect("num_structual must fit in usize");
 
         let parent_error = bytemuck::cast_slice::<u8, u32>(&reads[2])[0];
 
@@ -226,7 +242,7 @@ impl Parser {
 
         let tape = bytemuck::cast_slice::<u8, TapeEntry>(&reads[1]);
 
-        Ok(Tape::new(tape[..structure_count].to_vec()))
+        Ok(Tape::new(tape[..num_structual].to_vec()))
     }
 }
 
@@ -235,19 +251,19 @@ impl Programs {
         let scan_fsm = gpu.compile_program(
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
-            &[true, false],
+            &[true, false, true],
         );
 
         let scan_structural = gpu.compile_program(
             include_str!("shaders/scan_structural.wgsl"),
             "main",
-            &[true, true, false, false],
+            &[true, true, false, false, true],
         );
 
         let scan_depth = gpu.compile_program(
             include_str!("shaders/scan_depth.wgsl"),
             "main",
-            &[true, true, false],
+            &[true, true, false, true],
         );
 
         let parent_link = gpu.compile_program(
@@ -259,7 +275,7 @@ impl Programs {
         let assemble_tape = gpu.compile_program(
             include_str!("shaders/assemble_tape.wgsl"),
             "main",
-            &[true, true, true, true, false, true],
+            &[true, true, true, true, false, true, true, true],
         );
 
         Self {
