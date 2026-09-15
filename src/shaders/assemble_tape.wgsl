@@ -143,7 +143,7 @@ fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
     let kind = token_kind(b);
 
     if kind == TOKEN_INVALID {
-        atomicOr(&parser_state.error_flags, 1u);
+        atomicOr(&parser_state.error_flags, 2u);
     }
 
     tape[local_id.x] = TapeEntry(

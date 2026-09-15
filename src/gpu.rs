@@ -6,12 +6,6 @@ pub struct Gpu {
     queue: wgpu::Queue,
 }
 
-pub struct ComputeProgram {
-    pipeline: wgpu::ComputePipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    binding_count: usize,
-}
-
 impl Default for Gpu {
     fn default() -> Self {
         Self::new()
@@ -144,12 +138,7 @@ impl Gpu {
         bytemuck::cast_slice(&bytes).to_vec()
     }
 
-    pub fn compile_program(
-        &self,
-        shader_src: &str,
-        entry_point: &str,
-        storage_accesses: &[StorageAccess],
-    ) -> ComputeProgram {
+    pub fn compile_program(&self, shader_src: &str, entry_point: &str) -> wgpu::ComputePipeline {
         let module = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -157,69 +146,25 @@ impl Gpu {
                 source: wgpu::ShaderSource::Wgsl(shader_src.into()),
             });
 
-        let bind_group_layout_entries = storage_accesses
-            .iter()
-            .enumerate()
-            .map(|(i, &access)| wgpu::BindGroupLayoutEntry {
-                binding: i.try_into().unwrap(),
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage {
-                        read_only: access.is_read_only(),
-                    },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            })
-            .collect::<Vec<_>>();
-
-        let bind_group_layout =
-            self.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: None,
-                    entries: &bind_group_layout_entries,
-                });
-
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: None,
-                bind_group_layouts: &[Some(&bind_group_layout)],
-                immediate_size: 0,
-            });
-
-        let pipeline = self
-            .device
+        self.device
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: None,
-                layout: Some(&pipeline_layout),
+                // let wgsl autoinfer which storage buffers are read vs. read write
+                layout: None,
                 module: &module,
                 entry_point: Some(entry_point),
                 cache: None,
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-            });
-
-        ComputeProgram {
-            pipeline,
-            bind_group_layout,
-            binding_count: storage_accesses.len(),
-        }
+            })
     }
 
     pub fn encode_program(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        program: &ComputeProgram,
+        program: &wgpu::ComputePipeline,
         buffers: &[&wgpu::Buffer],
         workgroups: u32,
     ) {
-        assert_eq!(
-            buffers.len(),
-            program.binding_count,
-            "buffer count must match compute program bindings"
-        );
-
         let bind_group_entries = buffers
             .iter()
             .enumerate()
@@ -231,12 +176,12 @@ impl Gpu {
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &program.bind_group_layout,
+            layout: &program.get_bind_group_layout(0),
             entries: &bind_group_entries,
         });
 
         let mut cpass = encoder.begin_compute_pass(&Default::default());
-        cpass.set_pipeline(&program.pipeline);
+        cpass.set_pipeline(program);
         cpass.set_bind_group(0, &bind_group, &[]);
         cpass.dispatch_workgroups(workgroups, 1, 1);
     }
@@ -247,20 +192,10 @@ impl Gpu {
         encoder: &mut wgpu::CommandEncoder,
         shader_src: &str,
         entry_point: &str,
-        buffers: &[(&wgpu::Buffer, StorageAccess)],
+        buffers: &[&wgpu::Buffer],
         workgroups: u32,
     ) {
-        let storage_accesses = buffers
-            .iter()
-            .map(|(_, access)| *access)
-            .collect::<Vec<_>>();
-
-        let program = self.compile_program(shader_src, entry_point, &storage_accesses);
-        let buffers = buffers
-            .iter()
-            .map(|(buffer, _)| *buffer)
-            .collect::<Vec<_>>();
-
+        let program = self.compile_program(shader_src, entry_point);
         self.encode_program(encoder, &program, &buffers, workgroups);
     }
 
@@ -269,32 +204,12 @@ impl Gpu {
         &self,
         shader_src: &str,
         entry_point: &str,
-        buffers: &[(&wgpu::Buffer, StorageAccess)],
+        buffers: &[&wgpu::Buffer],
         workgroups: u32,
     ) {
         let mut encoder = self.create_encoder();
         self.encode(&mut encoder, shader_src, entry_point, buffers, workgroups);
         self.submit(encoder);
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StorageAccess(u8);
-
-impl StorageAccess {
-    pub const READ: Self = Self(1 << 0);
-    pub const WRITE: Self = Self(1 << 1);
-
-    pub const fn is_read_only(self) -> bool {
-        self.0 == Self::READ.0
-    }
-}
-
-impl std::ops::BitOr for StorageAccess {
-    type Output = Self;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self(self.0 | rhs.0)
     }
 }
 
@@ -325,11 +240,7 @@ mod tests {
         gpu.dispatch(
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
-            &[
-                (&input_buf, StorageAccess::READ),
-                (&output_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (&input_len_buf, StorageAccess::READ),
-            ],
+            &[&input_buf, &output_buf, &input_len_buf],
             1,
         );
 
@@ -368,11 +279,7 @@ mod tests {
         gpu.dispatch(
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
-            &[
-                (&input_buf, StorageAccess::READ),
-                (&output_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (&input_len_buf, StorageAccess::READ),
-            ],
+            &[&input_buf, &output_buf, &input_len_buf],
             1,
         );
 
@@ -414,11 +321,7 @@ mod tests {
         gpu.dispatch(
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
-            &[
-                (&input_buf, StorageAccess::READ),
-                (&fsm_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (&input_len_buf, StorageAccess::READ),
-            ],
+            &[&input_buf, &fsm_buf, &input_len_buf],
             1,
         );
 
@@ -430,14 +333,11 @@ mod tests {
             include_str!("shaders/scan_structural.wgsl"),
             "main",
             &[
-                (&input_buf, StorageAccess::READ),
-                (&fsm_buf, StorageAccess::READ),
-                (&compact_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (
-                    &parser_state_buf,
-                    StorageAccess::READ | StorageAccess::WRITE,
-                ),
-                (&input_len_buf, StorageAccess::READ),
+                &input_buf,
+                &fsm_buf,
+                &compact_buf,
+                &parser_state_buf,
+                &input_len_buf,
             ],
             1,
         );
@@ -448,15 +348,7 @@ mod tests {
         gpu.dispatch(
             include_str!("shaders/scan_depth.wgsl"),
             "main",
-            &[
-                (&input_buf, StorageAccess::READ),
-                (&compact_buf, StorageAccess::READ),
-                (&depth_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (
-                    &parser_state_buf,
-                    StorageAccess::READ | StorageAccess::WRITE,
-                ),
-            ],
+            &[&input_buf, &compact_buf, &depth_buf, &parser_state_buf],
             1,
         );
 
@@ -494,11 +386,7 @@ mod tests {
         gpu.dispatch(
             include_str!("shaders/scan_fsm.wgsl"),
             "main",
-            &[
-                (&input_buf, StorageAccess::READ),
-                (&fsm_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (&input_len_buf, StorageAccess::READ),
-            ],
+            &[&input_buf, &fsm_buf, &input_len_buf],
             1,
         );
 
@@ -510,14 +398,11 @@ mod tests {
             include_str!("shaders/scan_structural.wgsl"),
             "main",
             &[
-                (&input_buf, StorageAccess::READ),
-                (&fsm_buf, StorageAccess::READ),
-                (&compact_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (
-                    &parser_state_buf,
-                    StorageAccess::READ | StorageAccess::WRITE,
-                ),
-                (&input_len_buf, StorageAccess::READ),
+                &input_buf,
+                &fsm_buf,
+                &compact_buf,
+                &parser_state_buf,
+                &input_len_buf,
             ],
             1,
         );
@@ -528,15 +413,7 @@ mod tests {
         gpu.dispatch(
             include_str!("shaders/scan_depth.wgsl"),
             "main",
-            &[
-                (&input_buf, StorageAccess::READ),
-                (&compact_buf, StorageAccess::READ),
-                (&depth_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (
-                    &parser_state_buf,
-                    StorageAccess::READ | StorageAccess::WRITE,
-                ),
-            ],
+            &[&input_buf, &compact_buf, &depth_buf, &parser_state_buf],
             1,
         );
 
@@ -552,15 +429,12 @@ mod tests {
             include_str!("shaders/parent_link.wgsl"),
             "main",
             &[
-                (&input_buf, StorageAccess::READ),
-                (&compact_buf, StorageAccess::READ),
-                (&parent_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (&summary_a_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (&summary_b_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (
-                    &parser_state_buf,
-                    StorageAccess::READ | StorageAccess::WRITE,
-                ),
+                &input_buf,
+                &compact_buf,
+                &parent_buf,
+                &summary_a_buf,
+                &summary_b_buf,
+                &parser_state_buf,
             ],
             1,
         );

@@ -9,7 +9,7 @@ fn main() -> Result<()> {
     let json = match (args.next(), args.next(), args.next()) {
         (Some(arg), Some(p), None) if arg == "-f" => {
             let j = std::fs::read(p)?;
-            todo!()
+            String::from_utf8(j)?
         }
         (Some(j), None, None) => j,
         _ => bail!("either pass a file -f or inline json"),

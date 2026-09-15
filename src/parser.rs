@@ -1,7 +1,4 @@
-use crate::{
-    Tape, TapeEntry,
-    gpu::{ComputeProgram, Gpu, StorageAccess},
-};
+use crate::{Tape, TapeEntry, gpu::Gpu};
 use anyhow::{Result, ensure};
 use bytemuck::{Pod, Zeroable};
 
@@ -15,11 +12,11 @@ pub struct Parser {
 }
 
 struct Programs {
-    scan_fsm: ComputeProgram,
-    scan_structural: ComputeProgram,
-    scan_depth: ComputeProgram,
-    parent_link: ComputeProgram,
-    assemble_tape: ComputeProgram,
+    scan_fsm: wgpu::ComputePipeline,
+    scan_structural: wgpu::ComputePipeline,
+    scan_depth: wgpu::ComputePipeline,
+    parent_link: wgpu::ComputePipeline,
+    assemble_tape: wgpu::ComputePipeline,
 }
 
 impl Parser {
@@ -242,66 +239,12 @@ impl Parser {
 
 impl Programs {
     fn compile(gpu: &Gpu) -> Self {
-        let scan_fsm = gpu.compile_program(
-            include_str!("shaders/scan_fsm.wgsl"),
-            "main",
-            &[
-                StorageAccess::READ,
-                StorageAccess::READ | StorageAccess::WRITE,
-                StorageAccess::READ,
-            ],
-        );
-
-        let scan_structural = gpu.compile_program(
-            include_str!("shaders/scan_structural.wgsl"),
-            "main",
-            &[
-                StorageAccess::READ,
-                StorageAccess::READ,
-                StorageAccess::READ | StorageAccess::WRITE,
-                StorageAccess::READ | StorageAccess::WRITE,
-                StorageAccess::READ,
-            ],
-        );
-
-        let scan_depth = gpu.compile_program(
-            include_str!("shaders/scan_depth.wgsl"),
-            "main",
-            &[
-                StorageAccess::READ,
-                StorageAccess::READ,
-                StorageAccess::READ | StorageAccess::WRITE,
-                StorageAccess::READ | StorageAccess::WRITE,
-            ],
-        );
-
-        let parent_link = gpu.compile_program(
-            include_str!("shaders/parent_link.wgsl"),
-            "main",
-            &[
-                StorageAccess::READ,
-                StorageAccess::READ,
-                StorageAccess::READ | StorageAccess::WRITE,
-                StorageAccess::READ | StorageAccess::WRITE,
-                StorageAccess::READ | StorageAccess::WRITE,
-                StorageAccess::READ | StorageAccess::WRITE,
-            ],
-        );
-
-        let assemble_tape = gpu.compile_program(
-            include_str!("shaders/assemble_tape.wgsl"),
-            "main",
-            &[
-                StorageAccess::READ,
-                StorageAccess::READ,
-                StorageAccess::READ,
-                StorageAccess::READ,
-                StorageAccess::READ | StorageAccess::WRITE,
-                StorageAccess::READ,
-                StorageAccess::READ,
-                StorageAccess::READ | StorageAccess::WRITE,
-            ],
-        );
+        let scan_fsm = gpu.compile_program(include_str!("shaders/scan_fsm.wgsl"), "main");
+        let scan_structural =
+            gpu.compile_program(include_str!("shaders/scan_structural.wgsl"), "main");
+        let scan_depth = gpu.compile_program(include_str!("shaders/scan_depth.wgsl"), "main");
+        let parent_link = gpu.compile_program(include_str!("shaders/parent_link.wgsl"), "main");
+        let assemble_tape = gpu.compile_program(include_str!("shaders/assemble_tape.wgsl"), "main");
 
         Self {
             scan_fsm,
