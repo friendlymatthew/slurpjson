@@ -3,6 +3,7 @@ use crate::{
     gpu::{ComputeProgram, Gpu, StorageAccess},
 };
 use anyhow::{Result, ensure};
+use bytemuck::{Pod, Zeroable};
 
 pub const MAX_INPUT_BYTES: usize = 256;
 const PARENT_SUMMARY_SIZE: usize = (2 * std::mem::size_of::<u32>())
@@ -65,9 +66,11 @@ impl Parser {
             .gpu
             .storage_buffer_empty("compact", buffer_size(std::mem::size_of::<u32>()));
 
-        let num_structual_buf = self
+        let parser_state = ParserState::zeroed();
+
+        let parser_state_buf = self
             .gpu
-            .storage_buffer_empty("num_structual", count_buffer_size());
+            .storage_buffer("parser_state", bytemuck::bytes_of(&parser_state));
 
         let depth_buf = self
             .gpu
@@ -84,10 +87,6 @@ impl Parser {
         let parent_summary_b_buf = self
             .gpu
             .storage_buffer_empty("parent_summaries_b", parent_summary_buffer_size());
-
-        let parent_error_buf = self
-            .gpu
-            .storage_buffer("parent_errors", bytemuck::cast_slice(&[0u32]));
 
         let tape_buf = self
             .gpu
@@ -119,7 +118,7 @@ impl Parser {
         //
         // output:
         //     compact: [0, 1, 6, 8, 20]
-        //     num_structual: 5
+        //     structural_count: 5
         //
         // interpretation:
         //     tokens:  [{, "foo", :, "bar\"baz\"", }]
@@ -132,7 +131,7 @@ impl Parser {
                 &input_buf,
                 &fsm_buf,
                 &compact_buf,
-                &num_structual_buf,
+                &parser_state_buf,
                 &input_len_buf,
             ],
             1,
@@ -151,35 +150,34 @@ impl Parser {
         self.gpu.encode_program(
             &mut encoder,
             &self.programs.scan_depth,
-            &[&input_buf, &compact_buf, &depth_buf, &num_structual_buf],
+            &[&input_buf, &compact_buf, &depth_buf, &parser_state_buf],
             1,
         );
 
         // input:
         //     json:    {"foo": "bar\"baz\""}
         //     compact: [0, 1, 6, 8, 20]
-        //     num_structual: 5
+        //     structural_count: 5
         //     tokens:  [{, "foo", :, "bar\"baz\"", }]
         //
         // output:
         //     index:        [ 0,     1, 2,            3, 4]
         //     parents:      [-1,     0, 0,            0, 0]
-        //     parent_error: 0
+        //     error_flags: 0
         //
         //     parent indices refer to the compact token list, not byte positions
         //     every token except the root is contained by token 0, the opening brace
-        //     parent_error remains zero because the opening and closing braces match
+        //     error_flags remains zero because the opening and closing braces match
         self.gpu.encode_program(
             &mut encoder,
             &self.programs.parent_link,
             &[
                 &input_buf,
                 &compact_buf,
-                &num_structual_buf,
                 &parent_buf,
                 &parent_summary_a_buf,
                 &parent_summary_b_buf,
-                &parent_error_buf,
+                &parser_state_buf,
             ],
             1,
         );
@@ -214,35 +212,31 @@ impl Parser {
                 &tape_buf,
                 &fsm_buf,
                 &input_len_buf,
-                &num_structual_buf,
+                &parser_state_buf,
             ],
             1,
         );
 
-        let num_structual_staging = self
+        let parser_state_staging = self
             .gpu
-            .encode_copy_to_staging(&mut encoder, &num_structual_buf);
+            .encode_copy_to_staging(&mut encoder, &parser_state_buf);
         let tape_staging = self.gpu.encode_copy_to_staging(&mut encoder, &tape_buf);
-        let parent_error_staging = self
-            .gpu
-            .encode_copy_to_staging(&mut encoder, &parent_error_buf);
 
         self.gpu.submit(encoder);
 
-        let reads =
-            self.gpu
-                .read_stagings(&[&num_structual_staging, &tape_staging, &parent_error_staging]);
+        let reads = self
+            .gpu
+            .read_stagings(&[&parser_state_staging, &tape_staging]);
 
-        let num_structual = usize::try_from(bytemuck::cast_slice::<u8, u32>(&reads[0])[0])
-            .expect("num_structual must fit in usize");
+        let parser_state = bytemuck::pod_read_unaligned::<ParserState>(&reads[0]);
+        let structural_count = usize::try_from(parser_state.structural_count)
+            .expect("structural_count must fit in usize");
 
-        let parent_error = bytemuck::cast_slice::<u8, u32>(&reads[2])[0];
-
-        ensure!(parent_error == 0, "mismatched json delimiters");
+        ensure!(parser_state.error_flags == 0, "invalid json");
 
         let tape = bytemuck::cast_slice::<u8, TapeEntry>(&reads[1]);
 
-        Ok(Tape::new(tape[..num_structual].to_vec()))
+        Ok(Tape::new(tape[..structural_count].to_vec()))
     }
 }
 
@@ -277,7 +271,7 @@ impl Programs {
                 StorageAccess::READ,
                 StorageAccess::READ,
                 StorageAccess::READ | StorageAccess::WRITE,
-                StorageAccess::READ,
+                StorageAccess::READ | StorageAccess::WRITE,
             ],
         );
 
@@ -285,7 +279,6 @@ impl Programs {
             include_str!("shaders/parent_link.wgsl"),
             "main",
             &[
-                StorageAccess::READ,
                 StorageAccess::READ,
                 StorageAccess::READ,
                 StorageAccess::READ | StorageAccess::WRITE,
@@ -306,7 +299,7 @@ impl Programs {
                 StorageAccess::READ | StorageAccess::WRITE,
                 StorageAccess::READ,
                 StorageAccess::READ,
-                StorageAccess::READ,
+                StorageAccess::READ | StorageAccess::WRITE,
             ],
         );
 
@@ -324,13 +317,16 @@ fn buffer_size(element_size: usize) -> u64 {
     u64::try_from(MAX_INPUT_BYTES * element_size).expect("buffer size must fit in u64")
 }
 
-fn count_buffer_size() -> u64 {
-    u64::try_from(std::mem::size_of::<u32>()).expect("count buffer size must fit in u64")
-}
-
 fn parent_summary_buffer_size() -> u64 {
     u64::try_from(MAX_INPUT_BYTES * PARENT_SUMMARY_SIZE)
         .expect("parent summary buffer size fits in u64")
+}
+
+#[repr(C)]
+#[derive(Pod, Zeroable, Clone, Copy)]
+struct ParserState {
+    structural_count: u32,
+    error_flags: u32,
 }
 
 #[cfg(test)]
@@ -395,6 +391,17 @@ mod tests {
 
         let err = parser.parse_str("{]").unwrap_err();
 
-        assert_eq!(err.to_string(), "mismatched json delimiters");
+        assert_eq!(err.to_string(), "invalid json");
+    }
+
+    #[test]
+    fn test_invalid_token_error() {
+        let Ok(parser) = Parser::try_new() else {
+            return;
+        };
+
+        let err = parser.parse_str("@").unwrap_err();
+
+        assert_eq!(err.to_string(), "invalid json");
     }
 }

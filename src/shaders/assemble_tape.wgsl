@@ -22,9 +22,14 @@ var<storage, read> fsm: array<vec3<u32>>;
 @binding(6)
 var<storage, read> input_len: array<u32>;
 
+struct ParserState {
+    structural_count: u32,
+    error_flags: atomic<u32>,
+}
+
 @group(0)
 @binding(7)
-var<storage, read> num_structual: array<u32>;
+var<storage, read_write> parser_state: ParserState;
 
 fn read_byte(idx: u32) -> u32 {
     return (global[idx / 4u] >> ((idx % 4u) * 8u)) & 0xFFu;
@@ -129,13 +134,17 @@ var<storage, read_write> tape: array<TapeEntry>;
 @compute
 @workgroup_size(256)
 fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
-    if local_id.x >= num_structual[0] {
+    if local_id.x >= parser_state.structural_count {
         return;
     }
 
     let pos = compacted[local_id.x];
     let b = read_byte(pos);
     let kind = token_kind(b);
+
+    if kind == TOKEN_INVALID {
+        atomicOr(&parser_state.error_flags, 1u);
+    }
 
     tape[local_id.x] = TapeEntry(
         pos,

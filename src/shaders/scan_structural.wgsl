@@ -10,9 +10,14 @@ var<storage, read> fsm: array<vec3<u32>>;
 @binding(2)
 var<storage, read_write> output: array<u32>;
 
+struct ParserState {
+    structural_count: u32,
+    error_flags: atomic<u32>,
+}
+
 @group(0)
 @binding(3)
-var<storage, read_write> num_structual: array<u32>;
+var<storage, read_write> parser_state: ParserState;
 
 @group(0)
 @binding(4)
@@ -107,6 +112,6 @@ fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
     }
 
     if index == 255u {
-        num_structual[0] = scratch[255u];
+        parser_state.structural_count = scratch[255u];
     }
 }

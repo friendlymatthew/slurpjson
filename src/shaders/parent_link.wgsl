@@ -16,23 +16,24 @@ var<storage, read> compacted: array<u32>;
 
 @group(0)
 @binding(2)
-var<storage, read> num_structual: array<u32>;
-
-@group(0)
-@binding(3)
 var<storage, read_write> parents: array<i32>;
 
 @group(0)
-@binding(4)
+@binding(3)
 var<storage, read_write> summaries_a: array<StackSummary>;
 
 @group(0)
-@binding(5)
+@binding(4)
 var<storage, read_write> summaries_b: array<StackSummary>;
 
+struct ParserState {
+    structural_count: u32,
+    error_flags: atomic<u32>,
+}
+
 @group(0)
-@binding(6)
-var<storage, read_write> errors: array<atomic<u32>>;
+@binding(5)
+var<storage, read_write> parser_state: ParserState;
 
 fn read_byte(idx: u32) -> u32 {
     return (global[idx / 4u] >> ((idx % 4u) * 8u)) & 0xFFu;
@@ -57,14 +58,14 @@ fn matches_close(open_kind: u32, close_kind: u32) -> bool {
 }
 
 fn mark_error() {
-    atomicStore(&errors[0], 1u);
+    atomicOr(&parser_state.error_flags, 1u);
 }
 
 fn init_summary(index: u32) {
     summaries_a[index].pops = 0u;
     summaries_a[index].len = 0u;
 
-    if index >= num_structual[0] {
+    if index >= parser_state.structural_count {
         return;
     }
 
@@ -279,7 +280,7 @@ fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
         storageBarrier();
     }
 
-    if index < num_structual[0] {
+    if index < parser_state.structural_count {
         parents[index] = parent_before(index);
     }
 

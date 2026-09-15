@@ -424,7 +424,7 @@ mod tests {
 
         let compact_buf =
             gpu.storage_buffer_empty("compact", (256 * std::mem::size_of::<u32>()) as u64);
-        let num_structual_buf = gpu.storage_buffer_empty("num_structual", 4);
+        let parser_state_buf = gpu.storage_buffer("parser_state", bytemuck::cast_slice(&[0u32; 2]));
 
         gpu.dispatch(
             include_str!("shaders/scan_structural.wgsl"),
@@ -434,7 +434,7 @@ mod tests {
                 (&fsm_buf, StorageAccess::READ),
                 (&compact_buf, StorageAccess::READ | StorageAccess::WRITE),
                 (
-                    &num_structual_buf,
+                    &parser_state_buf,
                     StorageAccess::READ | StorageAccess::WRITE,
                 ),
                 (&input_len_buf, StorageAccess::READ),
@@ -452,17 +452,21 @@ mod tests {
                 (&input_buf, StorageAccess::READ),
                 (&compact_buf, StorageAccess::READ),
                 (&depth_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (&num_structual_buf, StorageAccess::READ),
+                (
+                    &parser_state_buf,
+                    StorageAccess::READ | StorageAccess::WRITE,
+                ),
             ],
             1,
         );
 
         let depths = gpu.read_buffer_as::<i32>(&depth_buf);
-        let num_structual = usize::try_from(gpu.read_buffer_as::<u32>(&num_structual_buf)[0])
-            .expect("num_structual fits usize");
+        let parser_state = gpu.read_buffer_as::<u32>(&parser_state_buf);
+        let structural_count =
+            usize::try_from(parser_state[0]).expect("structural_count fits usize");
 
         assert_eq!(
-            &depths[..num_structual],
+            &depths[..structural_count],
             &[1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 2, 1, 0]
         );
     }
@@ -500,7 +504,7 @@ mod tests {
 
         let compact_buf =
             gpu.storage_buffer_empty("compact", (256 * std::mem::size_of::<u32>()) as u64);
-        let num_structual_buf = gpu.storage_buffer_empty("num_structual", 4);
+        let parser_state_buf = gpu.storage_buffer("parser_state", bytemuck::cast_slice(&[0u32; 2]));
 
         gpu.dispatch(
             include_str!("shaders/scan_structural.wgsl"),
@@ -510,7 +514,7 @@ mod tests {
                 (&fsm_buf, StorageAccess::READ),
                 (&compact_buf, StorageAccess::READ | StorageAccess::WRITE),
                 (
-                    &num_structual_buf,
+                    &parser_state_buf,
                     StorageAccess::READ | StorageAccess::WRITE,
                 ),
                 (&input_len_buf, StorageAccess::READ),
@@ -528,7 +532,10 @@ mod tests {
                 (&input_buf, StorageAccess::READ),
                 (&compact_buf, StorageAccess::READ),
                 (&depth_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (&num_structual_buf, StorageAccess::READ),
+                (
+                    &parser_state_buf,
+                    StorageAccess::READ | StorageAccess::WRITE,
+                ),
             ],
             1,
         );
@@ -541,19 +548,19 @@ mod tests {
             u64::try_from(256 * summary_size).expect("summary buffer size fits u64");
         let summary_a_buf = gpu.storage_buffer_empty("parent_summaries_a", summary_buffer_size);
         let summary_b_buf = gpu.storage_buffer_empty("parent_summaries_b", summary_buffer_size);
-        let error_buf = gpu.storage_buffer("parent_errors", bytemuck::cast_slice(&[0u32]));
-
         gpu.dispatch(
             include_str!("shaders/parent_link.wgsl"),
             "main",
             &[
                 (&input_buf, StorageAccess::READ),
                 (&compact_buf, StorageAccess::READ),
-                (&num_structual_buf, StorageAccess::READ),
                 (&parent_buf, StorageAccess::READ | StorageAccess::WRITE),
                 (&summary_a_buf, StorageAccess::READ | StorageAccess::WRITE),
                 (&summary_b_buf, StorageAccess::READ | StorageAccess::WRITE),
-                (&error_buf, StorageAccess::READ | StorageAccess::WRITE),
+                (
+                    &parser_state_buf,
+                    StorageAccess::READ | StorageAccess::WRITE,
+                ),
             ],
             1,
         );
@@ -561,22 +568,22 @@ mod tests {
         let parents = gpu.read_buffer_as::<i32>(&parent_buf);
         let depths = gpu.read_buffer_as::<i32>(&depth_buf);
         let positions = gpu.read_buffer_as::<u32>(&compact_buf);
-        let errors = gpu.read_buffer_as::<u32>(&error_buf);
-        let num_structual = usize::try_from(gpu.read_buffer_as::<u32>(&num_structual_buf)[0])
-            .expect("num_structual fits usize");
+        let parser_state = gpu.read_buffer_as::<u32>(&parser_state_buf);
+        let structural_count =
+            usize::try_from(parser_state[0]).expect("structural_count fits usize");
 
-        assert_eq!(errors[0], 0);
+        assert_eq!(parser_state[1], 0);
         assert_eq!(parents[0], -1);
         assert_eq!(
-            &positions[..num_structual],
+            &positions[..structural_count],
             &[0, 1, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15, 16]
         );
         assert_eq!(
-            &depths[..num_structual],
+            &depths[..structural_count],
             &[1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 2, 1, 0]
         );
         assert_eq!(
-            &parents[..num_structual],
+            &parents[..structural_count],
             &[-1, 0, 0, 0, 3, 3, 3, 6, 6, 6, 6, 3, 0]
         );
     }

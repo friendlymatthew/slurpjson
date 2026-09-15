@@ -31,9 +31,14 @@ fn depth_delta(b: u32) -> i32 {
 @binding(2)
 var<storage, read_write> output: array<i32>;
 
+struct ParserState {
+    structural_count: u32,
+    error_flags: atomic<u32>,
+}
+
 @group(0)
 @binding(3)
-var<storage, read> num_structual: array<u32>;
+var<storage, read_write> parser_state: ParserState;
 
 var<workgroup> scratch: array<i32, 256>;
 
@@ -43,7 +48,7 @@ fn main(@builtin(local_invocation_id) local_id: vec3<u32>) {
     let index = local_id.x;
 
     var delta = 0i;
-    if index < num_structual[0] {
+    if index < parser_state.structural_count {
         delta = depth_delta(read_byte(compacted[index]));
     }
 
