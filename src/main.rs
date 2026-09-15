@@ -1,14 +1,19 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Result, bail};
 use slurpjson::{Document, Parser};
 
 fn main() -> Result<()> {
     env_logger::init();
 
-    let path = std::env::args()
-        .nth(1)
-        .ok_or_else(|| anyhow!("pass in json as arg"))?;
+    let mut args = std::env::args().skip(1);
 
-    let json = std::fs::read_to_string(path)?;
+    let json = match (args.next(), args.next(), args.next()) {
+        (Some(arg), Some(p), None) if arg == "-f" => {
+            let j = std::fs::read(p)?;
+            todo!()
+        }
+        (Some(j), None, None) => j,
+        _ => bail!("either pass a file -f or inline json"),
+    };
 
     let parser = Parser::try_new()?;
     let tape = parser.parse_str(&json)?;
